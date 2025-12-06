@@ -12,7 +12,7 @@ public class VRIntroManager : MonoBehaviour
 {
     [Header("Referencias")]
     [Tooltip("Referencia al PathControllerV2 que controla el recorrido")]
-    public PathControllerV2 pathController;  // ✨ CAMBIADO: PathController → PathControllerV2
+    public PathControllerV2 pathController;  // 
 
     [Tooltip("Texto del mensaje (TextMeshPro)")]
     public TextMeshProUGUI messageText;
@@ -39,24 +39,24 @@ public class VRIntroManager : MonoBehaviour
 
     void Start()
     {
-        // ✨ MEJORADO: Validar referencias
+        // 
         if (pathController == null)
         {
-            Debug.LogError("[VRIntroManager] ❌ PathControllerV2 no asignado en el Inspector!");
+            Debug.LogError("[VRIntroManager]  PathControllerV2 no asignado en el Inspector!");
             enabled = false;
             return;
         }
 
         if (messageCanvas == null)
         {
-            Debug.LogError("[VRIntroManager] ❌ Canvas no asignado en el Inspector!");
+            Debug.LogError("[VRIntroManager]  Canvas no asignado en el Inspector!");
             enabled = false;
             return;
         }
 
         if (messageText == null)
         {
-            Debug.LogError("[VRIntroManager] ❌ TextMeshProUGUI no asignado en el Inspector!");
+            Debug.LogError("[VRIntroManager] TextMeshProUGUI no asignado en el Inspector!");
             enabled = false;
             return;
         }
@@ -67,7 +67,7 @@ public class VRIntroManager : MonoBehaviour
 
         // Mostrar mensaje de bienvenida
         ShowMessage(introMessage);
-        Debug.Log($"[VRIntroManager] 📢 Mostrando mensaje de bienvenida por {introDisplayTime} segundos");
+        Debug.Log($"[VRIntroManager]  Mostrando mensaje de bienvenida por {introDisplayTime} segundos");
 
         // Iniciar experiencia después del tiempo configurado
         StartCoroutine(StartExperienceAfterDelay());
@@ -82,14 +82,14 @@ public class VRIntroManager : MonoBehaviour
 
         // Ocultar mensaje
         HideMessage();
-        Debug.Log("[VRIntroManager] ✅ Mensaje de bienvenida ocultado");
+        Debug.Log("[VRIntroManager]  Mensaje de bienvenida ocultado");
 
         // Activar PathController y comenzar recorrido
         pathController.enabled = true;
         pathController.StartPath();
         experienceStarted = true;
 
-        Debug.Log("[VRIntroManager] 🚀 Recorrido iniciado");
+        Debug.Log("[VRIntroManager]  Recorrido iniciado");
     }
 
     void Update()
@@ -101,7 +101,7 @@ public class VRIntroManager : MonoBehaviour
             {
                 experienceCompleted = true;
                 ShowMessage(outroMessage);
-                Debug.Log("[VRIntroManager] 🏁 Recorrido completado - Mostrando mensaje final");
+                Debug.Log("[VRIntroManager]  Recorrido completado - Mostrando mensaje final");
             }
         }
     }
@@ -127,7 +127,7 @@ public class VRIntroManager : MonoBehaviour
             messageCanvas.enabled = false;
     }
 
-    // ✨ OPCIONAL: Método público para reiniciar la experiencia
+    
     /// <summary>
     /// Reinicia la experiencia desde el principio (útil para testing)
     /// </summary>
@@ -142,6 +142,6 @@ public class VRIntroManager : MonoBehaviour
         ShowMessage(introMessage);
         StartCoroutine(StartExperienceAfterDelay());
 
-        Debug.Log("[VRIntroManager] 🔄 Experiencia reiniciada");
+        Debug.Log("[VRIntroManager]  Experiencia reiniciada");
     }
 }
