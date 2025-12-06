@@ -1,0 +1,461 @@
+using System.Collections;
+using UnityEngine;
+using UnityEngine.XR.Hands;
+
+/// <summary>
+/// Sistema avanzado de avatar en primera persona para VR
+/// Diseñado específicamente para pacientes cuadripléjicos con hand tracking
+/// </summary>
+[RequireComponent(typeof(Animator))]
+public class FirstPersonBodyController : MonoBehaviour
+{
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                    SECCIÓN 1: REFERENCIAS CRÍTICAS                     ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+    
+    [Header("Referencias XR")]
+    [Tooltip("Transform del XR Origin (punto de tracking del HMD)")]
+    public Transform xrRigCamera; // Debe ser la Main Camera dentro del XR Origin
+    
+    [Tooltip("Transform del cuerpo completo del avatar")]
+    public Transform avatarBodyRoot;
+    
+    [Tooltip("Referencia al PathController para sincronización")]
+    public PathControllerV2 pathController;
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║              SECCIÓN 2: CONFIGURACIÓN DE BODY VISIBILITY               ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+    
+    [Header("Configuración de Visibilidad del Cuerpo")]
+    [Tooltip("Offset vertical de la cabeza respecto a la cámara (altura del cuello)")]
+    [Range(-0.3f, 0.1f)]
+    public float headOffsetY = -0.15f; // Ajusta para que veas desde "dentro" de la cabeza
+    
+    [Tooltip("Offset del cuerpo completo respecto a la cámara")]
+    public Vector3 bodyOffset = new Vector3(0, -1.0f, 0); // Cuerpo debajo de la cámara
+    
+    [Tooltip("¿Ocultar la cabeza del avatar para evitar ver tu propia cara?")]
+    public bool hideHead = true;
+    
+    [Tooltip("Layer de la cabeza (para culling selectivo)")]
+    public string headLayerName = "FirstPersonBody";
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                SECCIÓN 3: HAND TRACKING (META QUEST)                   ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+    
+    [Header("Hand Tracking Configuration")]
+    [Tooltip("¿Usar hand tracking en lugar de controladores?")]
+    public bool useHandTracking = true;
+    
+    [Tooltip("Transform de la mano izquierda del avatar")]
+    public Transform leftHandTarget;
+    
+    [Tooltip("Transform de la mano derecha del avatar")]
+    public Transform rightHandTarget;
+    
+    [Tooltip("Suavizado del movimiento de las manos")]
+    [Range(0.01f, 0.5f)]
+    public float handSmoothTime = 0.1f;
+
+    // Referencias a los hand tracking subsystems de Meta Quest
+    private Transform leftHandTracking;  // XR Left Hand (de XR Rig)
+    private Transform rightHandTracking; // XR Right Hand (de XR Rig)
+    
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                   SECCIÓN 4: SISTEMA DE ANIMACIONES                    ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+    
+    [Header("Sistema de Animaciones")]
+    [Tooltip("Velocidad mínima para activar animación de caminar")]
+    [Range(0.01f, 1f)]
+    public float minWalkSpeed = 0.05f;
+    
+    [Tooltip("Suavizado de transiciones de velocidad")]
+    [Range(0.1f, 1f)]
+    public float animationSmoothing = 0.3f;
+    
+    // Hash de parámetros del Animator (optimización de rendimiento)
+    private int hashIsWalking;
+    private int hashSpeed;
+    private int hashIsSitting;
+    private int hashIsCrouching;
+    
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                    SECCIÓN 5: VARIABLES PRIVADAS                       ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+    
+    private Animator animator;
+    private Vector3 lastPosition;
+    private float currentSpeed = 0f;
+    
+    // Para suavizado de manos
+    private Vector3 leftHandVelocity = Vector3.zero;
+    private Vector3 rightHandVelocity = Vector3.zero;
+    
+    // Para culling de cabeza
+    private SkinnedMeshRenderer[] bodyRenderers;
+    private Transform headBone;
+    
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                      SECCIÓN 6: INICIALIZACIÓN                         ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+    
+    void Start()
+    {
+        InitializeComponents();
+        SetupFirstPersonView();
+        InitializeHandTracking();
+        CacheAnimatorParameters();
+    }
+    
+    /// <summary>
+    /// Inicializa y valida todos los componentes necesarios
+    /// </summary>
+    void InitializeComponents()
+    {
+        animator = GetComponent<Animator>();
+        
+        if (animator == null)
+        {
+            Debug.LogError("[FirstPersonBodyController]  No se encontró Animator. El script se desactivará.");
+            enabled = false;
+            return;
+        }
+        
+        if (xrRigCamera == null)
+        {
+            // Intento automático de encontrar la cámara
+            xrRigCamera = Camera.main?.transform;
+            if (xrRigCamera == null)
+            {
+                Debug.LogError("[FirstPersonBodyController]  XR Rig Camera no asignada. Asigna la Main Camera del XR Origin.");
+                enabled = false;
+                return;
+            }
+        }
+        
+        lastPosition = xrRigCamera.position;
+        
+        // Obtener todos los renderers del cuerpo
+        bodyRenderers = GetComponentsInChildren<SkinnedMeshRenderer>();
+        
+        Debug.Log("[FirstPersonBodyController]  Componentes inicializados correctamente.");
+    }
+    
+    /// <summary>
+    /// Configura la vista en primera persona ocultando la cabeza si es necesario
+    /// </summary>
+    void SetupFirstPersonView()
+    {
+        if (!hideHead) return;
+        
+        // Crear o usar layer para la cabeza
+        int fpLayer = LayerMask.NameToLayer(headLayerName);
+        if (fpLayer == -1)
+        {
+            Debug.LogWarning($"[FirstPersonBodyController]  Layer '{headLayerName}' no existe. Crear en Edit > Project Settings > Tags and Layers");
+            return;
+        }
+        
+        // Encontrar el bone de la cabeza
+        headBone = animator.GetBoneTransform(HumanBodyBones.Head);
+        
+        if (headBone != null)
+        {
+            // Asignar layer recursivamente a todos los hijos de la cabeza
+            SetLayerRecursively(headBone.gameObject, fpLayer);
+            
+            // Configurar la cámara para no renderizar ese layer
+            Camera cam = xrRigCamera.GetComponent<Camera>();
+            if (cam != null)
+            {
+                cam.cullingMask &= ~(1 << fpLayer);
+            }
+            
+            Debug.Log("[FirstPersonBodyController] Cabeza oculta correctamente para primera persona.");
+        }
+    }
+    
+    /// <summary>
+    /// Inicializa el sistema de hand tracking de Meta Quest
+    /// </summary>
+    void InitializeHandTracking()
+    {
+        if (!useHandTracking) return;
+        
+        // Buscar los hand tracking transforms del XR Rig
+        // Estructura típica: XR Origin > Camera Offset > LeftHand Controller / RightHand Controller
+        
+        Transform cameraOffset = xrRigCamera.parent;
+        if (cameraOffset != null)
+        {
+            // Buscar hand tracking transforms
+            foreach (Transform child in cameraOffset)
+            {
+                if (child.name.Contains("Left") && child.name.Contains("Hand"))
+                {
+                    leftHandTracking = child;
+                }
+                else if (child.name.Contains("Right") && child.name.Contains("Hand"))
+                {
+                    rightHandTracking = child;
+                }
+            }
+        }
+        
+        // Validación
+        if (leftHandTracking == null || rightHandTracking == null)
+        {
+            Debug.LogWarning("[FirstPersonBodyController]  No se encontraron hand tracking transforms. Asegúrate de tener XR Hands activado.");
+            useHandTracking = false;
+        }
+        else
+        {
+            Debug.Log("[FirstPersonBodyController]  Hand tracking inicializado correctamente.");
+        }
+    }
+    
+    /// <summary>
+    /// Cachea los parámetros del Animator para optimización
+    /// </summary>
+    void CacheAnimatorParameters()
+    {
+        hashIsWalking = Animator.StringToHash("IsWalking");
+        hashSpeed = Animator.StringToHash("Speed");
+        hashIsSitting = Animator.StringToHash("IsSitting");
+        hashIsCrouching = Animator.StringToHash("IsCrouching");
+        
+        // Verificar que existen en el Animator
+        if (!HasParameter(hashIsWalking))
+            Debug.LogWarning("[FirstPersonBodyController]  Parámetro 'IsWalking' no existe en el Animator.");
+        if (!HasParameter(hashSpeed))
+            Debug.LogWarning("[FirstPersonBodyController]  Parámetro 'Speed' no existe en el Animator.");
+    }
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                  SECCIÓN 7: UPDATE LOOP (CRÍTICO)                      ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+    
+    /// <summary>
+    /// LateUpdate garantiza ejecución después del tracking de VR
+    /// CRÍTICO: Previene jitter y asegura sincronización perfecta
+    /// </summary>
+    void LateUpdate()
+    {
+        SyncBodyWithCamera();
+        UpdateHandTracking();
+        UpdateLocomotionAnimation();
+    }
+    
+    /// <summary>
+    /// Sincroniza la posición del cuerpo con la cámara VR
+    /// </summary>
+    void SyncBodyWithCamera()
+    {
+        // Posición: cuerpo sigue a la cámara con offset
+        transform.position = new Vector3(
+            xrRigCamera.position.x + bodyOffset.x,
+            xrRigCamera.position.y + bodyOffset.y,
+            xrRigCamera.position.z + bodyOffset.z
+        );
+        
+        // Rotación: solo en eje Y (horizontal) para evitar inclinaciones raras
+        Vector3 cameraForward = xrRigCamera.forward;
+        cameraForward.y = 0; // Proyectar al plano horizontal
+        
+        if (cameraForward.sqrMagnitude > 0.001f) // Evitar división por cero
+        {
+            transform.rotation = Quaternion.LookRotation(cameraForward);
+        }
+    }
+    
+    /// <summary>
+    /// Actualiza las manos del avatar con hand tracking
+    /// </summary>
+    void UpdateHandTracking()
+    {
+        if (!useHandTracking) return;
+        
+        // Mano izquierda
+        if (leftHandTracking != null && leftHandTarget != null)
+        {
+            leftHandTarget.position = Vector3.SmoothDamp(
+                leftHandTarget.position,
+                leftHandTracking.position,
+                ref leftHandVelocity,
+                handSmoothTime
+            );
+            leftHandTarget.rotation = Quaternion.Slerp(
+                leftHandTarget.rotation,
+                leftHandTracking.rotation,
+                Time.deltaTime / handSmoothTime
+            );
+        }
+        
+        // Mano derecha
+        if (rightHandTracking != null && rightHandTarget != null)
+        {
+            rightHandTarget.position = Vector3.SmoothDamp(
+                rightHandTarget.position,
+                rightHandTracking.position,
+                ref rightHandVelocity,
+                handSmoothTime
+            );
+            rightHandTarget.rotation = Quaternion.Slerp(
+                rightHandTarget.rotation,
+                rightHandTracking.rotation,
+                Time.deltaTime / handSmoothTime
+            );
+        }
+    }
+    
+    /// <summary>
+    /// Actualiza las animaciones de locomoción basado en velocidad real
+    /// </summary>
+    void UpdateLocomotionAnimation()
+    {
+        // Calcular velocidad usando moving average para suavizado
+        Vector3 movement = xrRigCamera.position - lastPosition;
+        float instantSpeed = movement.magnitude / Mathf.Max(Time.deltaTime, 0.001f);
+        
+        // Suavizado exponencial
+        currentSpeed = Mathf.Lerp(currentSpeed, instantSpeed, animationSmoothing);
+        
+        // Determinar si está caminando
+        bool isWalking = currentSpeed > minWalkSpeed;
+        
+        // Actualizar Animator
+        if (HasParameter(hashIsWalking))
+            animator.SetBool(hashIsWalking, isWalking);
+        
+        if (HasParameter(hashSpeed))
+            animator.SetFloat(hashSpeed, currentSpeed);
+        
+        // Guardar posición para próximo frame
+        lastPosition = xrRigCamera.position;
+    }
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║              SECCIÓN 8: ANIMACIONES CONTEXTUALES (NUEVO)               ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+    
+    /// <summary>
+    /// Inicia animación de sentarse (llamado desde Waypoint)
+    /// </summary>
+    public void TriggerSitAnimation()
+    {
+        if (HasParameter(hashIsSitting))
+        {
+            StartCoroutine(PlayContextualAnimation(hashIsSitting, "Sitting"));
+        }
+    }
+    
+    /// <summary>
+    /// Inicia animación de agacharse (llamado desde Waypoint)
+    /// </summary>
+    public void TriggerCrouchAnimation()
+    {
+        if (HasParameter(hashIsCrouching))
+        {
+            StartCoroutine(PlayContextualAnimation(hashIsCrouching, "Crouching"));
+        }
+    }
+    
+    /// <summary>
+    /// Reproduce una animación contextual con transición suave
+    /// </summary>
+    IEnumerator PlayContextualAnimation(int animHash, string animName)
+    {
+        Debug.Log($"[FirstPersonBodyController]  Iniciando animación: {animName}");
+        
+        // Activar animación
+        animator.SetBool(animHash, true);
+        
+        // Esperar a que termine la animación
+        yield return new WaitForSeconds(GetAnimationLength(animName));
+        
+        // Desactivar animación
+        animator.SetBool(animHash, false);
+        
+        Debug.Log($"[FirstPersonBodyController]  Animación completada: {animName}");
+    }
+    
+    /// <summary>
+    /// Obtiene la duración de una animación por nombre
+    /// </summary>
+    float GetAnimationLength(string animationName)
+    {
+        RuntimeAnimatorController ac = animator.runtimeAnimatorController;
+        foreach (AnimationClip clip in ac.animationClips)
+        {
+            if (clip.name == animationName)
+            {
+                return clip.length;
+            }
+        }
+        return 2.0f; // Valor por defecto
+    }
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                    SECCIÓN 9: MÉTODOS AUXILIARES                       ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+    
+    /// <summary>
+    /// Verifica si un parámetro existe en el Animator
+    /// </summary>
+    bool HasParameter(int paramHash)
+    {
+        foreach (AnimatorControllerParameter param in animator.parameters)
+        {
+            if (param.nameHash == paramHash)
+                return true;
+        }
+        return false;
+    }
+    
+    /// <summary>
+    /// Asigna un layer recursivamente a un GameObject y sus hijos
+    /// </summary>
+    void SetLayerRecursively(GameObject obj, int layer)
+    {
+        obj.layer = layer;
+        foreach (Transform child in obj.transform)
+        {
+            SetLayerRecursively(child.gameObject, layer);
+        }
+    }
+    
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                   SECCIÓN 10: DEBUGGING VISUAL                         ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+    
+    void OnDrawGizmos()
+    {
+        if (xrRigCamera == null) return;
+        
+        // Línea de conexión cámara -> cuerpo
+        Gizmos.color = Color.cyan;
+        Gizmos.DrawLine(xrRigCamera.position, transform.position);
+        
+        // Esfera en posición del cuerpo
+        Gizmos.color = Color.green;
+        Gizmos.DrawWireSphere(transform.position, 0.3f);
+        
+        // Dibujar manos si hand tracking está activo
+        if (useHandTracking)
+        {
+            if (leftHandTarget != null)
+            {
+                Gizmos.color = Color.red;
+                Gizmos.DrawWireSphere(leftHandTarget.position, 0.05f);
+            }
+            if (rightHandTarget != null)
+            {
+                Gizmos.color = Color.blue;
+                Gizmos.DrawWireSphere(rightHandTarget.position, 0.05f);
+            }
+        }
+    }
+}
