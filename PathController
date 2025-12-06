@@ -1,0 +1,137 @@
+#PathController
+
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.XR.Interaction.Toolkit;
+
+// Script para controlar el recorrido automático en VR siguiendo waypoints
+public class PathController : MonoBehaviour
+{
+    [Header("Referencias principales")]
+    public Transform xrRig; // XR Rig que se mueve (la estructura de VR)
+    public List<Waypoint> waypoints; // Lista de los waypoints del recorrido
+
+    [Header("Opciones de recorrido")]
+    public bool autoStart = false; // Si quieres que inicie solo con el menú
+    public bool loopPath = false; // Si quieres que repita el camino
+    public float moveSpeed = 1.0f; // Velocidad de movimiento por defecto (m/s)
+
+    [Header("Opciones visuales")]
+    public bool showPathLine = true;
+    public Color pathColor = Color.cyan;
+
+    [Header("Suavidad de movimiento")]
+    // Time para la función SmoothDamp (mayor = más suave, menor = más rápido)
+    public float smoothTime = 1.5f;
+    int currentWaypointIndex = 0;
+    bool isMoving = false;
+    bool isPaused = false;
+    Vector3 velocity = Vector3.zero;
+    LineRenderer lineRenderer;
+
+    // Se puede acceder esta propiedad desde otros scripts (por ejemplo, VRIntroManager)
+    public bool IsMoving() { return isMoving; }
+
+    void Start()
+    {
+        if (showPathLine) SetupPathLine();
+        if (autoStart) StartPath();
+    }
+
+    // Dibuja la línea entre waypoints en la escena
+    void SetupPathLine()
+    {
+        if (waypoints.Count < 2) return;
+        lineRenderer = gameObject.AddComponent<LineRenderer>();
+        lineRenderer.positionCount = waypoints.Count;
+        for (int i = 0; i < waypoints.Count; i++)
+            lineRenderer.SetPosition(i, waypoints[i].transform.position);
+        lineRenderer.material = new Material(Shader.Find("Sprites/Default"));
+        lineRenderer.widthMultiplier = 0.05f;
+        lineRenderer.startColor = pathColor;
+        lineRenderer.endColor = pathColor;
+    }
+
+    // Inicia el recorrido (lo llama el menú introductorio luego de la pausa)
+    public void StartPath()
+    {
+        currentWaypointIndex = 0;
+        isMoving = true;
+        isPaused = false;
+        velocity = Vector3.zero; // Evitar aceleraciones extra
+        StartCoroutine(FollowPath());
+    }
+
+    // Pausar/continuar (puedes usar esto si deseas controlar el recorrido)
+    public void PausePath() { isPaused = true; }
+    public void ResumePath() { isPaused = false; }
+    public void StopPath()
+    {
+        isMoving = false;
+        isPaused = false;
+        velocity = Vector3.zero;
+        StopAllCoroutines();
+    }
+
+    // Rutina principal que sigue los waypoints
+    IEnumerator FollowPath()
+    {
+        while (isMoving && currentWaypointIndex < waypoints.Count)
+        {
+            Waypoint wp = waypoints[currentWaypointIndex];
+
+            Vector3 targetPosition = wp.transform.position;
+
+            // Llamamos la rutina para moverse y rotarse hacia el siguiente waypoint
+            yield return StartCoroutine(MoveToWaypoint(wp, targetPosition));
+
+            velocity = Vector3.zero; // Al llegar, evitamos rebotes
+
+            wp.OnWaypointReached(); // Llama el evento del waypoint (por si tiene audio o pausa)
+
+            // Se agrega la pausa del waypoint si aplica
+            float pauseTime = wp.GetTotalPauseDuration();
+            if (pauseTime > 0f) yield return new WaitForSeconds(pauseTime);
+
+            currentWaypointIndex++;
+        }
+
+        // Finaliza el recorrido (puedes poner aquí algún evento si lo deseas)
+        isMoving = false;
+    }
+
+    // Rutina para movimiento y rotación suave hacia el siguiente waypoint
+    IEnumerator MoveToWaypoint(Waypoint waypoint, Vector3 targetPosition)
+    {
+        float speed = (waypoint.customSpeed > 0) ? waypoint.customSpeed : moveSpeed;
+        float currentSmoothTime = smoothTime / Mathf.Max(speed, 0.1f);
+
+        float distance = Vector3.Distance(xrRig.position, targetPosition);
+
+        // Calculamos la dirección solo en plano horizontal (no vertical)
+        Vector3 direction = (targetPosition - xrRig.position);
+        direction.y = 0;
+        Quaternion targetRotation = Quaternion.LookRotation(direction);
+
+        while (distance > 1.0f && isMoving && !isPaused)
+        {
+            // 1. Movimiento suavizado
+            xrRig.position = Vector3.SmoothDamp(
+                xrRig.position,
+                targetPosition,
+                ref velocity,
+                currentSmoothTime
+            );
+            // 2. Rotación suavizada sobre el eje Y únicamente
+            xrRig.rotation = Quaternion.Lerp(
+                xrRig.rotation,
+                targetRotation,
+                3f * Time.deltaTime
+            );
+            // Solo actualizamos la distancia en plano horizontal
+            distance = Vector3.Distance(xrRig.position, targetPosition);
+            yield return null;
+        }
+    }
+}
