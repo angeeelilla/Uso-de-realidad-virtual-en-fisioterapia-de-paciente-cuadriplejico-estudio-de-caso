@@ -1,0 +1,147 @@
+using System.Collections;
+using System.Collections.Generic;
+using TMPro;
+using UnityEngine;
+
+/// <summary>
+/// Gestiona los mensajes de introducción y finalización en VR
+/// Muestra un mensaje inicial, espera, inicia el recorrido automático,
+/// y muestra mensaje final cuando termina
+/// </summary>
+public class VRIntroManager : MonoBehaviour
+{
+    [Header("Referencias")]
+    [Tooltip("Referencia al PathControllerV2 que controla el recorrido")]
+    public PathControllerV2 pathController;  // ✨ CAMBIADO: PathController → PathControllerV2
+
+    [Tooltip("Texto del mensaje (TextMeshPro)")]
+    public TextMeshProUGUI messageText;
+
+    [Tooltip("Canvas que contiene el mensaje")]
+    public Canvas messageCanvas;
+
+    [Header("Mensajes")]
+    [TextArea(3, 6)]
+    [Tooltip("Mensaje de bienvenida al inicio")]
+    public string introMessage = "Bienvenido a tu primera experiencia de realidad virtual.\n A continuación vas a tener la posibilidad de realizar un recorrido a través de este parque con tematica del Lago Calima y su cultura indígena. \n ¡Disfruta de la experiencia!";
+
+    [TextArea(3, 6)]
+    [Tooltip("Mensaje de despedida al final")]
+    public string outroMessage = "Gracias por participar de esta experiencia.\n Pide que te retiren las gafas";
+
+    [Header("Tiempos")]
+    [Tooltip("Segundos que se muestra el mensaje de bienvenida")]
+    public float introDisplayTime = 25f;
+
+    // Variables privadas de control
+    private bool experienceStarted = false;
+    private bool experienceCompleted = false;
+
+    void Start()
+    {
+        // ✨ MEJORADO: Validar referencias
+        if (pathController == null)
+        {
+            Debug.LogError("[VRIntroManager] ❌ PathControllerV2 no asignado en el Inspector!");
+            enabled = false;
+            return;
+        }
+
+        if (messageCanvas == null)
+        {
+            Debug.LogError("[VRIntroManager] ❌ Canvas no asignado en el Inspector!");
+            enabled = false;
+            return;
+        }
+
+        if (messageText == null)
+        {
+            Debug.LogError("[VRIntroManager] ❌ TextMeshProUGUI no asignado en el Inspector!");
+            enabled = false;
+            return;
+        }
+
+        // Desactivar PathController al inicio
+        pathController.enabled = false;
+        Debug.Log("[VRIntroManager] PathControllerV2 desactivado temporalmente");
+
+        // Mostrar mensaje de bienvenida
+        ShowMessage(introMessage);
+        Debug.Log($"[VRIntroManager] 📢 Mostrando mensaje de bienvenida por {introDisplayTime} segundos");
+
+        // Iniciar experiencia después del tiempo configurado
+        StartCoroutine(StartExperienceAfterDelay());
+    }
+
+    /// <summary>
+    /// Corrutina que espera el tiempo de introducción y luego inicia el recorrido
+    /// </summary>
+    IEnumerator StartExperienceAfterDelay()
+    {
+        yield return new WaitForSeconds(introDisplayTime);
+
+        // Ocultar mensaje
+        HideMessage();
+        Debug.Log("[VRIntroManager] ✅ Mensaje de bienvenida ocultado");
+
+        // Activar PathController y comenzar recorrido
+        pathController.enabled = true;
+        pathController.StartPath();
+        experienceStarted = true;
+
+        Debug.Log("[VRIntroManager] 🚀 Recorrido iniciado");
+    }
+
+    void Update()
+    {
+        // Verificar si terminó el recorrido
+        if (experienceStarted && !experienceCompleted && pathController != null)
+        {
+            if (!pathController.IsMoving())
+            {
+                experienceCompleted = true;
+                ShowMessage(outroMessage);
+                Debug.Log("[VRIntroManager] 🏁 Recorrido completado - Mostrando mensaje final");
+            }
+        }
+    }
+
+    /// <summary>
+    /// Muestra un mensaje en el canvas
+    /// </summary>
+    void ShowMessage(string text)
+    {
+        if (messageText != null)
+            messageText.text = text;
+
+        if (messageCanvas != null)
+            messageCanvas.enabled = true;
+    }
+
+    /// <summary>
+    /// Oculta el canvas de mensajes
+    /// </summary>
+    void HideMessage()
+    {
+        if (messageCanvas != null)
+            messageCanvas.enabled = false;
+    }
+
+    // ✨ OPCIONAL: Método público para reiniciar la experiencia
+    /// <summary>
+    /// Reinicia la experiencia desde el principio (útil para testing)
+    /// </summary>
+    public void RestartExperience()
+    {
+        experienceStarted = false;
+        experienceCompleted = false;
+
+        pathController.StopPath();
+        pathController.enabled = false;
+
+        ShowMessage(introMessage);
+        StartCoroutine(StartExperienceAfterDelay());
+
+        Debug.Log("[VRIntroManager] 🔄 Experiencia reiniciada");
+    }
+}
