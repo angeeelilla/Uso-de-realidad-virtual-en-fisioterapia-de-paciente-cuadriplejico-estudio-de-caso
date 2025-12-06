@@ -1,0 +1,341 @@
+using System.Collections;
+using UnityEngine;
+
+/// <summary>
+/// Waypoint mejorado con soporte para animaciones contextuales
+/// Permite triggers de sentarse, agacharse, o cualquier acción personalizada
+/// </summary>
+[DisallowMultipleComponent]
+public class WaypointContextual : MonoBehaviour
+{
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                      SECCIÓN 1: IDENTIFICACIÓN                         ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    [Header("Identificación")]
+    [Tooltip("Nombre descriptivo del waypoint")]
+    public string waypointName = "";
+
+    [Tooltip("Número de orden en el recorrido")]
+    public int waypointIndex = 0;
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                    SECCIÓN 2: SISTEMA DE PAUSA                         ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    [Header("Sistema de Pausa")]
+    [Range(0f, 30f)]
+    [Tooltip("Tiempo de pausa en este waypoint (segundos)")]
+    public float pauseDuration = 0f;
+
+    [Tooltip("Velocidad personalizada (0 = usar velocidad global)")]
+    public float customSpeed = 0f;
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║              SECCIÓN 3: ANIMACIONES CONTEXTUALES (NUEVO)               ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    [Header("Animaciones Contextuales")]
+    [Tooltip("Tipo de animación a reproducir al llegar a este waypoint")]
+    public ContextualAnimationType animationType = ContextualAnimationType.None;
+    
+    [Tooltip("Duración de la animación (se suma a pauseDuration)")]
+    [Range(0f, 30f)]
+    public float animationDuration = 0f;
+    
+    [Tooltip("¿Pausar el recorrido mientras se reproduce la animación?")]
+    public bool pauseWhileAnimating = true;
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                        SECCIÓN 4: AUDIO                                ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    [Header("Audio")]
+    [Tooltip("¿Este waypoint reproduce audio?")]
+    public bool hasAudio = false;
+
+    [Tooltip("Clip de audio a reproducir")]
+    public AudioClip audioClip;
+
+    [Tooltip("¿Pausar mientras se reproduce el audio?")]
+    public bool pauseWhileAudio = false;
+
+    [Range(0f, 1f)]
+    [Tooltip("Volumen del audio")]
+    public float audioVolume = 1f;
+    
+    [Tooltip("¿Audio espacial (3D)?")]
+    public bool spatialAudio = true;
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                      SECCIÓN 5: VISUALIZACIÓN                          ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    [Header("Visualización")]
+    [Tooltip("Color del Gizmo según tipo de animación")]
+    public bool autoColor = true;
+    
+    public Color gizmoColor = Color.yellow;
+
+    [Range(0.1f, 2f)]
+    [Tooltip("Tamaño de la esfera")]
+    public float gizmoSize = 0.5f;
+
+    [Tooltip("¿Mostrar nombre en el Editor?")]
+    public bool showLabel = true;
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                    SECCIÓN 6: VARIABLES PRIVADAS                       ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    private AudioSource audioSource;
+    private bool audioPlaying;
+    private FirstPersonBodyController bodyController;
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                     SECCIÓN 7: INICIALIZACIÓN                          ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    void Awake()
+    {
+        InitializeAudio();
+        FindBodyController();
+    }
+    
+    void InitializeAudio()
+    {
+        if (hasAudio && audioClip != null)
+        {
+            audioSource = gameObject.AddComponent<AudioSource>();
+            audioSource.clip = audioClip;
+            audioSource.playOnAwake = false;
+            audioSource.volume = audioVolume;
+            audioSource.spatialBlend = spatialAudio ? 1.0f : 0.0f;
+            
+            if (spatialAudio)
+            {
+                audioSource.minDistance = 1f;
+                audioSource.maxDistance = 50f;
+                audioSource.rolloffMode = AudioRolloffMode.Linear;
+            }
+        }
+    }
+    
+    void FindBodyController()
+    {
+        // Buscar el FirstPersonBodyController en la escena
+        bodyController = FindObjectOfType<FirstPersonBodyController>();
+        
+        if (bodyController == null && animationType != ContextualAnimationType.None)
+        {
+            Debug.LogWarning($"[Waypoint {waypointIndex}]  No se encontró FirstPersonBodyController. Las animaciones no funcionarán.");
+        }
+    }
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                  SECCIÓN 8: MÉTODOS PÚBLICOS PRINCIPALES               ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    /// <summary>
+    /// Llamado cuando el paciente llega a este waypoint
+    /// </summary>
+    public void OnWaypointReached()
+    {
+        Debug.Log($"[Waypoint {waypointIndex}]  Llegó a: {waypointName}");
+        
+        // Reproducir audio si está configurado
+        if (hasAudio && audioSource != null)
+        {
+            PlayAudio();
+        }
+        
+        // Ejecutar animación contextual si está configurada
+        if (animationType != ContextualAnimationType.None && bodyController != null)
+        {
+            ExecuteContextualAnimation();
+        }
+    }
+    
+    /// <summary>
+    /// Ejecuta la animación contextual según el tipo configurado
+    /// </summary>
+    void ExecuteContextualAnimation()
+    {
+        switch (animationType)
+        {
+            case ContextualAnimationType.Sit:
+                Debug.Log($"[Waypoint {waypointIndex}] Activando animación de SENTARSE");
+                bodyController.TriggerSitAnimation();
+                break;
+                
+            case ContextualAnimationType.Crouch:
+                Debug.Log($"[Waypoint {waypointIndex}]  Activando animación de AGACHARSE");
+                bodyController.TriggerCrouchAnimation();
+                break;
+                
+            case ContextualAnimationType.Custom:
+                Debug.Log($"[Waypoint {waypointIndex}]  Animación personalizada (implementar según necesidad)");
+                // Aquí puedes agregar más animaciones personalizadas
+                break;
+        }
+    }
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                     SECCIÓN 9: GESTIÓN DE AUDIO                        ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    public void PlayAudio()
+    {
+        if (audioSource != null)
+        {
+            audioSource.Play();
+            audioPlaying = true;
+            Debug.Log($"[Waypoint {waypointIndex}] 🔊 Reproduciendo audio: {audioClip.name}");
+        }
+    }
+
+    public void StopAudio()
+    {
+        if (audioSource != null)
+        {
+            audioSource.Stop();
+            audioPlaying = false;
+        }
+    }
+
+    public bool IsAudioPlaying()
+    {
+        return audioPlaying && audioSource != null && audioSource.isPlaying;
+    }
+
+    public float GetAudioDuration()
+    {
+        return audioClip != null ? audioClip.length : 0f;
+    }
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                  SECCIÓN 10: CÁLCULO DE TIEMPOS                        ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    /// <summary>
+    /// Calcula el tiempo total que el sistema debe pausar en este waypoint
+    /// Incluye: pauseDuration + animationDuration + audioDuration
+    /// </summary>
+    public float GetTotalPauseDuration()
+    {
+        float totalTime = pauseDuration;
+        
+        // Agregar duración del audio si está configurado para pausar
+        if (pauseWhileAudio && audioClip != null)
+        {
+            totalTime += audioClip.length;
+        }
+        
+        // Agregar duración de la animación si está configurado para pausar
+        if (pauseWhileAnimating && animationType != ContextualAnimationType.None)
+        {
+            totalTime += animationDuration;
+        }
+        
+        return totalTime;
+    }
+
+    public void ResetWaypoint()
+    {
+        StopAudio();
+    }
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║              SECCIÓN 11: VISUALIZACIÓN EN EL EDITOR                    ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    void OnDrawGizmos()
+    {
+        // Color automático según tipo de animación
+        if (autoColor)
+        {
+            gizmoColor = GetColorForAnimationType(animationType);
+        }
+        
+        Gizmos.color = gizmoColor;
+        Gizmos.DrawWireSphere(transform.position, gizmoSize);
+        
+        // Esfera sólida más pequeña en el centro
+        Gizmos.color = new Color(gizmoColor.r, gizmoColor.g, gizmoColor.b, 0.3f);
+        Gizmos.DrawSphere(transform.position, gizmoSize * 0.5f);
+    }
+
+    void OnDrawGizmosSelected()
+    {
+        Gizmos.color = gizmoColor;
+        Gizmos.DrawWireSphere(transform.position, gizmoSize);
+
+        if (showLabel)
+        {
+#if UNITY_EDITOR
+            string label = $"WP{waypointIndex}: {waypointName}";
+            
+            // Agregar ícono según animación
+            switch (animationType)
+            {
+                case ContextualAnimationType.Sit:
+                    label += " sit";
+                    break;
+                case ContextualAnimationType.Crouch:
+                    label += " crouch";
+                    break;
+                case ContextualAnimationType.Custom:
+                    label += "walk";
+                    break;
+            }
+            
+            UnityEditor.Handles.Label(
+                transform.position + Vector3.up * (gizmoSize + 0.3f),
+                label
+            );
+#endif
+        }
+    }
+    
+    /// <summary>
+    /// Obtiene un color representativo para cada tipo de animación
+    /// </summary>
+    Color GetColorForAnimationType(ContextualAnimationType type)
+    {
+        switch (type)
+        {
+            case ContextualAnimationType.None:
+                return Color.yellow;
+            case ContextualAnimationType.Sit:
+                return new Color(0.2f, 0.8f, 1f); // Azul claro
+            case ContextualAnimationType.Crouch:
+                return new Color(1f, 0.5f, 0.2f); // Naranja
+            case ContextualAnimationType.Custom:
+                return new Color(0.8f, 0.2f, 1f); // Púrpura
+            default:
+                return Color.white;
+        }
+    }
+}
+
+// ╔═══════════════════════════════════════════════════════════════════════╗
+// ║                        ENUMERACIONES                                   ║
+// ╚═══════════════════════════════════════════════════════════════════════╝
+
+/// <summary>
+/// Tipos de animaciones contextuales disponibles
+/// </summary>
+public enum ContextualAnimationType
+{
+    [Tooltip("Sin animación especial")]
+    None,
+    
+    [Tooltip("El avatar se sienta (ej: banco en parque)")]
+    Sit,
+    
+    [Tooltip("El avatar se agacha (ej: observar flores)")]
+    Crouch,
+    
+    [Tooltip("Animación personalizada (implementar en código)")]
+    Custom
+}
