@@ -1,0 +1,175 @@
+using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.Rendering.VirtualTexturing;
+using static UnityEditor.ShaderData;
+
+
+[DisallowMultipleComponent]
+public class Waypoint : MonoBehaviour
+{
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                      SECCIÓN 1: IDENTIFICACIÓN                         ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    [Header("Identificación")]
+    [Tooltip("Nombre descriptivo del waypoint (ej: 'Punto de inicio', 'Flores rojas')")]
+    // EXPLICACIÓN: Este nombre aparece en logs y ayuda a identificar el waypoint
+    public string waypointName = "";
+
+    [Tooltip("Número de orden en el recorrido (0 = primero, 1 = segundo, etc.)")]
+    // EXPLICACIÓN: Define el orden en que se visitan los waypoints
+    // Debe ser secuencial: 0, 1, 2, 3...
+    public int waypointIndex = 0;
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                    SECCIÓN 2: SISTEMA DE PAUSA                         ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    [Header("Sistema de Pausa")]
+    [Range(0f, 10f)]
+    [Tooltip("Tiempo de pausa en este waypoint (segundos)")]
+    // EXPLICACIÓN: Cuánto tiempo pausar al llegar aquí
+    // 0 = sin pausa, 3-5 = pausa típica para observar
+    public float pauseDuration = 0f;
+
+    [Tooltip("Velocidad personalizada para este waypoint (0 = usar velocidad global)")]
+    // EXPLICACIÓN: Si es > 0, sobreescribe la velocidad del PathController
+    // Útil para ralentizar en zonas específicas
+    public float customSpeed = 0f;
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                        SECCIÓN 3: AUDIO                                ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    [Header("Audio")]
+    [Tooltip("¿Este waypoint reproduce audio?")]
+    public bool hasAudio = false;
+
+    [Tooltip("Clip de audio a reproducir al llegar")]
+    public AudioClip audioClip;
+
+    [Tooltip("¿Pausar mientras se reproduce el audio?")]
+    // EXPLICACIÓN: Si true, espera a que termine el audio antes de continuar
+    public bool pauseWhileAudio = false;
+
+    [Range(0.5f, 10f)]
+    [Tooltip("Distancia en metros para activar el audio")]
+    public float audioTriggerDistance = 2f;
+
+    [Range(0f, 1f)]
+    [Tooltip("Volumen del audio (0 = silencio, 1 = máximo)")]
+    public float audioVolume = 1f;
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                      SECCIÓN 4: VISUALIZACIÓN                          ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    [Header("Visualización")]
+    [Tooltip("Color del Gizmo (esfera) en el Editor")]
+    public Color gizmoColor = Color.yellow;
+
+    [Range(0.1f, 2f)]
+    [Tooltip("Tamaño de la esfera en metros")]
+    public float gizmoSize = 0.5f;
+
+    [Tooltip("¿Mostrar nombre del waypoint en el Editor?")]
+    public bool showLabel = true;
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                    SECCIÓN 5: VARIABLES PRIVADAS                       ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    private AudioSource audioSource;
+    private bool audioPlaying;
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                     SECCIÓN 6: INICIALIZACIÓN                          ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    void Awake()
+    {
+        // EXPLICACIÓN: Si tiene audio, crea un componente AudioSource automáticamente
+        if (hasAudio && audioClip != null)
+        {
+            audioSource = gameObject.AddComponent<AudioSource>();
+            audioSource.clip = audioClip;
+            audioSource.playOnAwake = false;
+            audioSource.volume = audioVolume;
+        }
+    }
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║                  SECCIÓN 7: MÉTODOS PÚBLICOS                           ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    public void OnWaypointReached()
+    {
+        // EXPLICACIÓN: Se ejecuta cuando el paciente llega a este waypoint
+        // Puedes agregar efectos especiales, cambiar colores, etc.
+        Debug.Log($"[Waypoint] Llegó a: {waypointName}");
+    }
+
+    public void PlayAudio()
+    {
+        if (audioSource != null)
+        {
+            audioSource.Play();
+            audioPlaying = true;
+        }
+    }
+
+    public void StopAudio()
+    {
+        if (audioSource != null)
+        {
+            audioSource.Stop();
+            audioPlaying = false;
+        }
+    }
+
+    public bool IsAudioPlaying()
+    {
+        return audioPlaying && audioSource.isPlaying;
+    }
+
+    public float GetAudioDuration()
+    {
+        return audioClip != null ? audioClip.length : 0f;
+    }
+
+    public float GetTotalPauseDuration()
+    {
+        // EXPLICACIÓN: Calcula el tiempo total de pausa
+        // = pauseDuration + duración del audio (si pauseWhileAudio es true)
+        return pauseWhileAudio && audioClip != null ? GetAudioDuration() + pauseDuration : pauseDuration;
+    }
+
+    public void ResetWaypoint()
+    {
+        StopAudio();
+    }
+
+    // ╔═══════════════════════════════════════════════════════════════════════╗
+    // ║              SECCIÓN 8: VISUALIZACIÓN EN EL EDITOR                     ║
+    // ╚═══════════════════════════════════════════════════════════════════════╝
+
+    void OnDrawGizmosSelected()
+    {
+        // EXPLICACIÓN: Dibuja la esfera SOLO cuando el waypoint está seleccionado
+        // Esto evita que la escena se llene de esferas todo el tiempo
+
+        Gizmos.color = gizmoColor;
+        Gizmos.DrawWireSphere(transform.position, gizmoSize);
+
+        if (showLabel)
+        {
+#if UNITY_EDITOR
+            UnityEditor.Handles.Label(
+                transform.position + Vector3.up * (gizmoSize + 0.3f),
+                $"WP{waypointIndex}: {waypointName}"
+            );
+#endif
+        }
+    }
+}
